@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Torn Stock Optimizer
-// @namespace    http://tampermonkey.net/
+// @namespace    https://github.com/mnuck/torn_stock_optimizer
 // @version      2.0.0
 // @description  Optimizes company stock ordering using on-page data
 // @author       Stock Optimizer
@@ -15,23 +15,24 @@
 
     function getWarehouseCapacity() {
         const maxEl = document.querySelector('.storage-capacity .max');
-        if (maxEl) {
-            const capacity = parseNumber(maxEl.textContent);
-            if (capacity > 0) {
-                console.log(`📦 Warehouse capacity: ${capacity.toLocaleString()}`);
-                return capacity;
-            }
+        if (!maxEl) {
+            // Fallback to default if not found
+            console.warn('⚠️ Could not detect warehouse capacity, using default 500,000');
+            return 500000;
         }
-
-        // Fallback to default if not found
-        console.warn('⚠️ Could not detect warehouse capacity, using default 500,000');
-        return 500000;
+        const capacity = parseNumber(maxEl.textContent);
+        if (isNaN(capacity) || capacity <= 0) {
+            console.warn(`⚠️ Could not parse warehouse capacity, got "${maxEl.textContent}", using default 500,000`);
+            return 500000;
+        }
+        console.log(`📦 Warehouse capacity: ${capacity.toLocaleString()}`);
+        return capacity;
     }
 
 
     // Extract data from DOM
     function parseNumber(text) {
-        return parseInt(text.replace(/[,\s]/g, '')) || 0;
+        return parseInt(text.replace(/[,\s]/g, ''), 10);
     }
 
     function getOnOrderTotal(itemName) {
@@ -43,11 +44,13 @@
             const statusEl = order.querySelector('.status');
             const amountEl = order.querySelector('.amount');
 
-            if (nameEl?.textContent.trim() === itemName &&
-                statusEl?.textContent.trim() !== 'Delivered' &&
-                amountEl) {
-                total += parseNumber(amountEl.textContent);
-            }
+            if (!nameEl || nameEl.textContent.trim() !== itemName) continue;
+            if (!statusEl || statusEl.textContent.trim() === 'Delivered') continue;
+            if (!amountEl) continue;
+
+            const amount = parseNumber(amountEl.textContent);
+            if (isNaN(amount)) continue;
+            total += amount;
         }
 
         return total;
@@ -244,15 +247,12 @@
 
             // Check if there are any non-zero orders before attempting to populate
             const hasOrders = Array.from(orders.values()).some(qty => qty > 0);
-            if (hasOrders) {
-                populateOrderFields(orders);
-            } else {
+            if (!hasOrders) {
                 console.log("ℹ️ No orders needed - warehouse is adequately stocked");
                 alert("No orders needed - your warehouse is adequately stocked for current sales levels.");
+                return;
             }
-
-            return { items, metrics, orders, freeSpace };
-
+            populateOrderFields(orders);
         } catch (error) {
             console.error("❌ Optimization failed:", error.message);
             alert(`Optimization failed: ${error.message}`);
@@ -261,6 +261,27 @@
     }
 
     // UI
+    function setButtonState(button, state) {
+        const states = {
+            processing: { text: '⏳ PROCESSING...', color: '#9b59b6', disabled: true },
+            success: { text: '✅ COMPLETE', color: '#28a745', disabled: true },
+            error: { text: '❌ FAILED', color: '#dc3545', disabled: true }
+        };
+
+        const config = states[state];
+        button.textContent = config.text;
+        button.style.background = config.color;
+        button.disabled = config.disabled;
+    }
+
+    function resetButton(button, delay) {
+        setTimeout(() => {
+            button.textContent = 'OPTIMIZE';
+            button.style.background = '#9b59b6';
+            button.disabled = false;
+        }, delay);
+    }
+
     function createButton() {
         // Check if button already exists
         if (document.querySelector('#stock-optimizer-btn')) {
@@ -293,40 +314,18 @@
         // Insert right after the PLACE ORDER button
         placeOrderWrapper.parentNode.insertBefore(wrapper, placeOrderWrapper.nextSibling);
 
-        // Button state management
-        function setButtonState(state) {
-            const states = {
-                processing: { text: '⏳ PROCESSING...', color: '#9b59b6', disabled: true },
-                success: { text: '✅ COMPLETE', color: '#28a745', disabled: true },
-                error: { text: '❌ FAILED', color: '#dc3545', disabled: true }
-            };
-
-            const config = states[state];
-            button.textContent = config.text;
-            button.style.background = config.color;
-            button.disabled = config.disabled;
-        }
-
-        function resetButton(delay) {
-            setTimeout(() => {
-                button.textContent = 'OPTIMIZE';
-                button.style.background = '#9b59b6';
-                button.disabled = false;
-            }, delay);
-        }
-
         // Add click handler
         button.addEventListener('click', (e) => {
             e.preventDefault();
-            setButtonState('processing');
+            setButtonState(button, 'processing');
 
             try {
                 optimizeAndFill();
-                setButtonState('success');
-                resetButton(2000);
+                setButtonState(button, 'success');
+                resetButton(button, 2000);
             } catch (error) {
-                setButtonState('error');
-                resetButton(3000);
+                setButtonState(button, 'error');
+                resetButton(button, 3000);
             }
         });
     }
@@ -348,17 +347,7 @@
             childList: true,
             subtree: true
         });
-
-        // Also retry every 2 seconds in case mutations are missed
-        setInterval(createButton, 2000);
     }
-
-    // Global functions
-    window.StockOptimizer = {
-        optimizeAndFill,
-        scrapeStockData,
-        getWarehouseCapacity
-    };
 
     // Initialize
     if (document.readyState === 'loading') {
