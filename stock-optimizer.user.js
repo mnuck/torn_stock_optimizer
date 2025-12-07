@@ -241,7 +241,15 @@
             const orders = computeOptimalOrder(items, freeSpace);
 
             displayResults(metrics, orders, freeSpace, warehouseCapacity);
-            populateOrderFields(orders);
+
+            // Check if there are any non-zero orders before attempting to populate
+            const hasOrders = Array.from(orders.values()).some(qty => qty > 0);
+            if (hasOrders) {
+                populateOrderFields(orders);
+            } else {
+                console.log("ℹ️ No orders needed - warehouse is adequately stocked");
+                alert("No orders needed - your warehouse is adequately stocked for current sales levels.");
+            }
 
             return { items, metrics, orders, freeSpace };
 
